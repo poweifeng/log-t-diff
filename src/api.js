@@ -3,11 +3,7 @@ const apiCalls = {
   "post": (url, data) => new Promise((ok, fail) => {
     var req = new XMLHttpRequest();
     req.onload = (e) => {
-      if (e) {
-        fail(e);
-      } else {
-        ok(req.response);
-      }
+      ok(req.response);
     };
     req.onerror =fail;
     req.open("POST", ROOT + url);

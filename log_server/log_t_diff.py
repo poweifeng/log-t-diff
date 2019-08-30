@@ -99,6 +99,7 @@ def mkdir_if_not_exist(d):
     os.mkdir(d)
 
 def logcat_t_thread_func(run, target, iterations):
+  print 'start logcat t thread'
   def timestamp_not_in(seen, alist):
     ret = []
     for ts, a in alist:
