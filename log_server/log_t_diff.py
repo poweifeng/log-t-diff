@@ -6,18 +6,17 @@ import datetime
 import shutil
 import threading
 import random
+import json
 
 CUR_DIR = os.path.dirname(os.path.realpath(__file__))
 
 TMP_TXT = ".tmp"
 DATE_FRMT = "%m-%d %H:%M:%S.%f"
 logcat_ = []
-RUN_PREFIX = "run"
-SLEEP_S = 3
+SLEEP_S = 1.2
 LOGCAT_TXT = "logcat_dump.txt"
 LOGCAT_T_TXT = "logcat_t_dump.txt"
-
-quit_ = False
+DATA_DIR = "./data"
 
 def devices():
   total = ['adb', 'devices', '-l']
@@ -59,29 +58,32 @@ def str_to_date(s):
 def date_to_str(date):
   return date.strftime(DATE_FRMT)[:-3]
 
-def logcat_thread_func(target):
+def dump_logs(logcat, fname):
+  with open(fname, "w") as fout:
+    fout.write("\n".join([a.strip() for b, a in logcat]))
+
+def logcat_thread_func(run, target):
   global logcat_
   device = wait_while_no_device(target)
   print('device:', device)
-  while not quit_:
+  while not run.quit_:
     process = subprocess.Popen(['adb', '-s', device, "logcat"], stdout=subprocess.PIPE)
-    logcat_ = []
+    run.logcat_ = []
     count = 0
-    while process.poll() is None and not quit_:
+    while process.poll() is None and not run.quit_:
       output = process.stdout.readline()
       if output is None or len(output) == 0:
         break
       if "  " in output and 'beginning of ' not in output:
         date_obj = str_to_date(output)
         #print(date_to_str(date_obj))
-        logcat_.append((date_obj, output))
+        run.logcat_.append((date_obj, output))
       else:
         continue
     time.sleep(.5)
 
-def dump_logs(logcat, fname):
-  with open(fname, "w") as fout:
-    fout.write("\n".join([a.strip() for b, a in logcat]))
+def clean_timestamp(st):
+  return date_to_str(st).replace(" ", "_").replace(":", "_").replace(".","_")
 
 def find_product_name(target):
   for d in devices():
@@ -96,31 +98,7 @@ def mkdir_if_not_exist(d):
   if not (os.path.exists(d) and os.path.isdir(d)):
     os.mkdir(d)
 
-def get_run_number(d):
-  if not (os.path.exists(d) and os.path.isdir(d)):
-    return 0
-
-  m_run = 0
-  for f in os.listdir(d):
-    if RUN_PREFIX in f:
-      run = int(f.replace(RUN_PREFIX, ""))
-      m_run = max(m_run, run)
-  return m_run
-
-def pad_num_3(i):
-  if i > 100: return i
-  if i < 10: return '00' + str(i)
-  if i < 100: return '0' + str(1)
-
-def logcat_t_thread_func(target):
-  global quit_
-  device = wait_while_no_device(target)
-  product = find_product_name(target)
-  mkdir_if_not_exist(product)
-  this_run = get_run_number(product) + 1
-  output_prefix = product + "/" + RUN_PREFIX + pad_num_3(this_run)
-  mkdir_if_not_exist(output_prefix)
-
+def logcat_t_thread_func(run, target, iterations):
   def timestamp_not_in(seen, alist):
     ret = []
     for ts, a in alist:
@@ -143,51 +121,76 @@ def logcat_t_thread_func(target):
         res = err
     return res.strip()
 
-  print('device:', device)
-  while not quit_:
-    logcat_.sort(key=lambda x: x[0])
-    log_len = len(logcat_)
+  def mark_seen(ts, seen):
+    seen[ts] = 1 if ts not in seen else seen[ts] + 1
+
+  mkdir_if_not_exist(DATA_DIR)
+
+  device = wait_while_no_device(target)
+  product = find_product_name(target)
+  mkdir_if_not_exist(product)
+
+  start_time = datetime.datetime.now()
+
+  output_prefix = DATA_DIR + "/" + product + "_" + clean_timestamp(start_time)
+  mkdir_if_not_exist(output_prefix)
+
+  it = 0
+  results = []
+
+  serial = adb('shell getprop ro.serialno', device)
+  sdk_num = adb('shell getprop ro.build.version.sdk', device)
+
+  run.current_iter_ = 0
+  for it in range(iterations):
+    run.current_iter_ = it
+    run.logcat_.sort(key=lambda x: x[0])
+    log_len = len(run.logcat_)
     if log_len == 0:
       print 'sleep'
       time.sleep(5)
       continue
 
     r = random.randint(0, log_len - 1)
-    time_stamp = logcat_[r][0]
-    rstrs = r_adb(date_to_str(time_stamp)).split("\n")
+    timestamp = run.logcat_[r][0]
+    rstrs = r_adb(date_to_str(timestamp)).split("\n")
 
-    print '-----------\n', date_to_str(time_stamp), '\n'
-
-    seen = {}
-    es = []
-    for ts, o in logcat_:
-      if ts >= time_stamp:
-        es.append((ts, o))
-        if ts in seen:
-          seen[ts] += 1
-        else:
-          seen[ts] = 1
-
-    res = map(lambda x: (str_to_date(x), x),
+    logcat_filtered = filter(lambda (ts, _): ts >= timestamp, run.logcat_)
+    logcat_t = map(lambda x: (str_to_date(x), x),
               filter(lambda x: 'beginning of ' not in x, rstrs))
+    seen, tseen = {}, {}
+    map(lambda (ts, _): mark_seen(ts, seen), logcat_filtered)
+    map(lambda (ts, _): mark_seen(ts, tseen), logcat_t)
 
-    rseen = {}
-    for ts, output in res:
-      if ts in rseen:
-        rseen[ts] += 1
-      else:
-        rseen[ts] = 1
+    in_t_not_logcat = timestamp_not_in(tseen, logcat_filtered)
+    in_logcat_not_t = timestamp_not_in(seen, logcat_t)
 
-    rvals = timestamp_not_in(rseen, es)
-    vals = timestamp_not_in(seen, res)
+    run_name = clean_timestamp(timestamp)
+    stamp_dir = output_prefix + "/" + run_name
+    mkdir_if_not_exist(stamp_dir)
 
-    print (len(es), len(rvals)), (len(res), len(vals))
-    if len(rvals) > 0 or len(vals) > 0:
-      stamp_dir = output_prefix + "/" + date_to_str(time_stamp).replace(" ", "_").replace(":", "_").replace(".","_")
-      mkdir_if_not_exist(stamp_dir)
-      dump_logs(es, stamp_dir + "/" + LOGCAT_TXT)
-      dump_logs(res, stamp_dir + "/" + LOGCAT_T_TXT)
+    result = {
+        "product": product,
+        "serial": serial,
+        "sdk": sdk_num,
+        "run_name": run_name,
+        "uptime": adb('shell uptime', device),
+        "logcat_length": len(logcat_filtered),
+        "logcat_t_length": len(logcat_t),
+        "in_logcat_not_t": len(in_logcat_not_t),
+        "in_t_not_logcat": len(in_t_not_logcat)
+    }
+    if len(in_t_not_logcat) > 0 or len(in_logcat_not_t) > 0:
+      dump_logs(logcat_filtered, stamp_dir + "/" + LOGCAT_TXT)
+      dump_logs(logcat_t, stamp_dir + "/" + LOGCAT_T_TXT)
+
+    results.append(result)
     time.sleep(SLEEP_S)
+
+  with open(output_prefix + "/result.json", "w") as fout:
+    fout.write(json.dumps(results))
+
+  run.quit_ = True
 
 def wait_while_no_device(target):
   iid = None
@@ -208,16 +211,29 @@ def pick_device():
     x = raw_input('pick a device: ')
   return wait_while_no_device(devs[int(x)])
 
+class LogcatRun:
+  def __init__(self, device, iterations):
+    self.quit_ = False
+    self.logcat_ = []
+    self.current_iter_ = 0
+
+    adb('logcat -P ""', device)
+
+    logcat_thread = threading.Thread(target=logcat_thread_func, args=(self, device))
+    logcat_thread.daemon = True
+    logcat_thread.start()
+
+    logcat_t_thread = threading.Thread(target=logcat_t_thread_func, args=(self, device, iterations))
+    logcat_t_thread.daemon = True
+    logcat_t_thread.start()
+
+  def iteration(self):
+    return self.current_iter_
+
 def setup():
   dev = pick_device()
   adb('logcat -P ""', dev)
-  logcat_thread = threading.Thread(target=logcat_thread_func, args=(dev,))
-  logcat_thread.daemon = True
-  logcat_thread.start()
-
-  logcat_t_thread = threading.Thread(target=logcat_t_thread_func, args=(dev,))
-  logcat_t_thread.daemon = True
-  logcat_t_thread.start()
+  LogcatRun(dev, 10)
 
   while True:
       try:
@@ -226,4 +242,5 @@ def setup():
         print('done')
         exit(1)
 
-setup()
+if __name__ == '__main__':
+  setup()
