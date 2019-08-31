@@ -71,7 +71,6 @@ function analyzeRecords(records) {
   };
 }
 
-
 class LogsDialog extends React.Component {
   constructor(props) {
     super(props);
@@ -303,11 +302,11 @@ class DeviceWidget extends React.Component {
       <Paper style={{margin: "15px 0", padding: 10, display: "flex", flexDirection: "column" }}>
         <div style={topRowStyle}>
           <div style={deviceIdStyle}>
-            <div>{product} ({sdk})</div>
+            <div>{product} ({sdk}) {!this.props.available ? ' - unavailable' : ''}</div>
             <div style={serialStyle}>{serial}</div>
           </div>
           <Button variant="contained" onClick={this.clickRun.bind(this)}
-                  disabled={this.state.leftRunningTime > 0}>
+                  disabled={!this.props.available || this.state.leftRunningTime > 0}>
             {this.state.leftRunningTime > 0 ? this.state.leftRunningTime + "%" : "Start run"}
           </Button>
         </div>
@@ -346,7 +345,12 @@ class WelcomePage extends React.Component {
 
   checkDevices() {
     api.get("devices").then(res => {
-      this.setState({devices: JSON.parse(res)});
+      let devicesMap = JSON.parse(res);
+      let devices = [];
+      for (var i in devicesMap) {
+        devices.push({name: i, available: devicesMap[i]});
+      }
+      this.setState({devices});
     });
   }
 
@@ -377,7 +381,9 @@ class WelcomePage extends React.Component {
       openDeviceId: null
     };
     const devices = this.state.devices.map(
-        (device) => <DeviceWidget key={device} deviceId={device} setOpen={this.setOpen.bind(this)} />
+        (device) =>
+          <DeviceWidget key={device.name} deviceId={device.name} available={device.available}
+              setOpen={this.setOpen.bind(this)} />
     );
     return (
       <div style={mainStyle}>

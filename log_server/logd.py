@@ -12,7 +12,7 @@ CORS(app)
 
 parsed_dirs_ = {}
 run_records_ = {}
-devices_ = []
+devices_ = {}
 logcat_run_inst_ = None
 device_id_ = {}
 inv_device_id_ = {}
@@ -46,6 +46,9 @@ def find_device(dev):
     adb('shell getprop ro.serialno', dev))
   inv_device_id_[device_id] = dev
   return device_id
+
+def order_logs(log_a, log_b):
+  return None
 
 @app.route('/logs/<dev_id_run>')
 def get_logs(dev_id_run):
@@ -101,7 +104,7 @@ def run_test():
   return 'true'
 
 def read_loop():
-  global parsed_dirs_, run_records_
+  global parsed_dirs_, run_records_, devices_
   while True:
     d = log_t.DATA_DIR
     if not (os.path.exists(d) and os.path.isdir(d)):
@@ -119,6 +122,8 @@ def read_loop():
         print 'read:', len(result_lines)
         for result in result_lines:
           key = create_id(result["product"], result["sdk"], result["serial"])
+          if key not in devices_:
+            devices_[key] = False
           if key in run_records_:
             run_records_[key].append(result)
           else:
@@ -136,7 +141,10 @@ def check_logcat_loop():
 def devices_loop():
   global devices_
   while True:
-    devices_ = [find_device(x) for x in log_t.devices()]
+    for key in devices_.keys():
+      devices[key] = False
+    for key in [find_device(x) for x in log_t.devices()]:
+      devices_[key] = True
     time.sleep(5)
 
 # start read thread
