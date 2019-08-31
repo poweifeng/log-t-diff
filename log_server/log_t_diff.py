@@ -63,7 +63,6 @@ def dump_logs(logcat, fname):
     fout.write("\n".join([a.strip() for b, a in logcat]))
 
 def logcat_thread_func(run, target):
-  global logcat_
   device = wait_while_no_device(target)
   print('device:', device)
   while not run.quit_:
@@ -163,19 +162,19 @@ def logcat_t_thread_func(run, target, iterations):
     map(lambda (ts, _): mark_seen(ts, seen), logcat_filtered)
     map(lambda (ts, _): mark_seen(ts, tseen), logcat_t)
 
-    in_t_not_logcat = timestamp_not_in(tseen, logcat_filtered)
-    in_logcat_not_t = timestamp_not_in(seen, logcat_t)
+    in_logcat_not_t = timestamp_not_in(tseen, logcat_filtered)
+    in_t_not_logcat = timestamp_not_in(seen, logcat_t)
 
     run_name = clean_timestamp(timestamp)
     stamp_dir = output_prefix + "/" + run_name
     mkdir_if_not_exist(stamp_dir)
-
+    uptime = adb('shell cat /proc/uptime', device).split(" ")[0]
     result = {
         "product": product,
         "serial": serial,
         "sdk": sdk_num,
         "run_name": run_name,
-        "uptime": adb('shell uptime', device),
+        "uptime": uptime,
         "logcat_length": len(logcat_filtered),
         "logcat_t_length": len(logcat_t),
         "in_logcat_not_t": len(in_logcat_not_t),
@@ -191,7 +190,7 @@ def logcat_t_thread_func(run, target, iterations):
   with open(output_prefix + "/result.json", "w") as fout:
     fout.write(json.dumps(results))
 
-  run.quit_ = True
+  run.quit()
 
 def wait_while_no_device(target):
   iid = None
@@ -217,6 +216,7 @@ class LogcatRun:
     self.quit_ = False
     self.logcat_ = []
     self.current_iter_ = 0
+    self.iterations_ = iterations
 
     adb('logcat -P ""', device)
 
@@ -228,8 +228,11 @@ class LogcatRun:
     logcat_t_thread.daemon = True
     logcat_t_thread.start()
 
-  def iteration(self):
-    return self.current_iter_
+  def quit(self):
+    self.quit_ = True
+
+  def iterations(self):
+    return [self.current_iter_, self.iterations_]
 
 def setup():
   dev = pick_device()

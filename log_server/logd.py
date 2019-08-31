@@ -12,7 +12,7 @@ CORS(app)
 
 parsed_dirs_ = {}
 run_records_ = {}
-devices_ = {}
+devices_ = []
 logcat_run_inst_ = None
 device_id_ = {}
 inv_device_id_ = {}
@@ -31,7 +31,7 @@ def not_found(error=None):
 def get_records(dev_id):
   if dev_id in run_records_:
     return json.dumps(run_records_[dev_id])
-  return json.dumps({})
+  return json.dumps([])
 
 def create_id(product, sdk, serial):
   return product + "+" + sdk + "+" + serial
@@ -46,6 +46,42 @@ def find_device(dev):
     adb('shell getprop ro.serialno', dev))
   inv_device_id_[device_id] = dev
   return device_id
+
+@app.route('/logs/<dev_id_run>')
+def get_logs(dev_id_run):
+  dev_id, run_id = dev_id_run.split("=")
+  base_d = log_t.DATA_DIR
+  ret = {}
+  for f in os.listdir(base_d):
+    if not (run_id in os.listdir(base_d + '/' + f)):
+      continue
+    with open(base_d + '/' + f + '/' + run_id + '/' + log_t.LOGCAT_TXT, "r") as fin:
+      ret['logcat'] = fin.read()
+    with open(base_d + '/' + f + '/' + run_id + '/' + log_t.LOGCAT_T_TXT, "r") as fin:
+      ret['logcat_t'] = fin.read()
+  logcat_lines, logcat_t_lines = ret['logcat'].split('\n'), ret['logcat_t'].split('\n')
+  in_logcat, in_t = [], []
+  seen, seen_t = {}, {}
+  LINE_LEN = 25
+  for i in logcat_t_lines:
+    if len(i) > LINE_LEN: seen_t[i[0:LINE_LEN]] = True
+  for i in logcat_lines:
+    if len(i) > LINE_LEN: seen[i[0:LINE_LEN]] = True
+  for i, l in enumerate(logcat_lines):
+    if len(l) > LINE_LEN and l[0:LINE_LEN] not in seen_t:
+      in_logcat.append(i)
+  for i, l in enumerate(logcat_t_lines):
+    if len(l) > LINE_LEN and l[0:LINE_LEN] not in seen:
+      in_t.append(i)
+  ret['in_logcat'] = in_logcat
+  ret['in_t'] = in_t
+  return json.dumps(ret)
+
+@app.route('/stat')
+def get_stat():
+  if logcat_run_inst_ == None:
+    return "true"
+  return json.dumps(logcat_run_inst_.iterations())
 
 @app.route('/devices')
 def get_devices():
@@ -62,7 +98,7 @@ def run_test():
   dev_id = request.data
   print dev_id, inv_device_id_[dev_id]
   logcat_run_inst_ = log_t.LogcatRun(inv_device_id_[dev_id], 10)
-  return 'hello world'
+  return 'true'
 
 def read_loop():
   global parsed_dirs_, run_records_
@@ -73,12 +109,14 @@ def read_loop():
       continue
     for f in os.listdir(d):
       if f in parsed_dirs_: continue
-      parsed_dirs_[f] = True
       f_path = d + "/" + f + "/result.json"
+      print f_path
       if not os.path.exists(f_path):
         continue
+      parsed_dirs_[f] = True
       with open(f_path, "r") as fin:
         result_lines = json.loads(fin.read())
+        print 'read:', len(result_lines)
         for result in result_lines:
           key = create_id(result["product"], result["sdk"], result["serial"])
           if key in run_records_:
@@ -113,4 +151,3 @@ check_thread.start()
 devices_thread = threading.Thread(target=devices_loop)
 devices_thread.daemon = True
 devices_thread.start()
-
