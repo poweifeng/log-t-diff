@@ -27,10 +27,18 @@ def not_found(error=None):
   resp.status_code = 404
   return resp
 
+@app.route('/reboot/<device_id>')
+def do_reboot(device_id):
+  dev = inv_device_id_[device_id]
+  adb('reboot', dev)
+  time.sleep(.75)
+  update_devices()
+  return "ok"
+
 @app.route('/get_records/<dev_id>')
 def get_records(dev_id):
   if dev_id in run_records_:
-    return json.dumps(run_records_[dev_id])
+    return json.dumps(run_records_[dev_id], ensure_ascii=False)
   return json.dumps([])
 
 def create_id(product, sdk, serial):
@@ -44,11 +52,34 @@ def find_device(dev):
     adb('shell getprop ro.product.name', dev),
     adb('shell getprop ro.build.version.sdk', dev),
     adb('shell getprop ro.serialno', dev))
+  device_id_[dev] = device_id
   inv_device_id_[device_id] = dev
   return device_id
 
 def order_logs(log_a, log_b):
-  return None
+  log_a.sort()
+  log_b.sort()
+  i_a, i_b = 0, 0
+  ret = []
+  while i_a < len(log_a) or i_b < len(log_b):
+    if i_a >= len(log_a):
+      ret += [[0, x] for x in log_b[i_b:]]
+      break
+    if i_b >= len(log_b):
+      ret += [[x, 0] for x in log_a[i_a:]]
+      break
+    a, b = log_a[i_a], log_b[i_b]
+    if a == b:
+      ret.append([log_a[i_a], 1])
+      i_a += 1
+      i_b += 1
+    elif a > b:
+      ret.append([0, b])
+      i_b += 1
+    else:
+      ret.append([a, 0])
+      i_a += 1
+  return ret
 
 @app.route('/logs/<dev_id_run>')
 def get_logs(dev_id_run):
@@ -63,32 +94,17 @@ def get_logs(dev_id_run):
     with open(base_d + '/' + f + '/' + run_id + '/' + log_t.LOGCAT_T_TXT, "r") as fin:
       ret['logcat_t'] = fin.read()
   logcat_lines, logcat_t_lines = ret['logcat'].split('\n'), ret['logcat_t'].split('\n')
-  in_logcat, in_t = [], []
-  seen, seen_t = {}, {}
-  LINE_LEN = 25
-  for i in logcat_t_lines:
-    if len(i) > LINE_LEN: seen_t[i[0:LINE_LEN]] = True
-  for i in logcat_lines:
-    if len(i) > LINE_LEN: seen[i[0:LINE_LEN]] = True
-  for i, l in enumerate(logcat_lines):
-    if len(l) > LINE_LEN and l[0:LINE_LEN] not in seen_t:
-      in_logcat.append(i)
-  for i, l in enumerate(logcat_t_lines):
-    if len(l) > LINE_LEN and l[0:LINE_LEN] not in seen:
-      in_t.append(i)
-  ret['in_logcat'] = in_logcat
-  ret['in_t'] = in_t
-  return json.dumps(ret)
+  return json.dumps(order_logs(logcat_lines, logcat_t_lines), ensure_ascii=False)
 
 @app.route('/stat')
 def get_stat():
   if logcat_run_inst_ == None:
     return "true"
-  return json.dumps(logcat_run_inst_.iterations())
+  return json.dumps(logcat_run_inst_.iterations(), ensure_ascii=False)
 
 @app.route('/devices')
 def get_devices():
-  return json.dumps(devices_)
+  return json.dumps(devices_, ensure_ascii=False)
 
 @app.route('/run_test', methods=['POST'])
 def run_test():
@@ -130,6 +146,14 @@ def read_loop():
             run_records_[key] = [result]
     time.sleep(2)
 
+def update_devices():
+  global devices_
+  adb_devices = [find_device(x) for x in log_t.devices()]
+  for key in devices_.keys():
+    devices_[key] = key in adb_devices
+  for key in adb_devices:
+    devices_[key] = True
+
 def check_logcat_loop():
   global logcat_run_inst_
   while True:
@@ -139,13 +163,11 @@ def check_logcat_loop():
     time.sleep(1)
 
 def devices_loop():
-  global devices_
   while True:
-    for key in devices_.keys():
-      devices[key] = False
-    for key in [find_device(x) for x in log_t.devices()]:
-      devices_[key] = True
+    update_devices()
     time.sleep(5)
+
+update_devices()
 
 # start read thread
 read_thread = threading.Thread(target=read_loop)

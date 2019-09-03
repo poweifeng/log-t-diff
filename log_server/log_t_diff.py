@@ -17,6 +17,7 @@ SLEEP_S = 1.2
 LOGCAT_TXT = "logcat_dump.txt"
 LOGCAT_T_TXT = "logcat_t_dump.txt"
 DATA_DIR = "./data"
+TEN_DAYS = datetime.timedelta(days=10)
 
 def devices():
   total = ['adb', 'devices', '-l']
@@ -53,7 +54,9 @@ def str_to_date(s):
   if not "  " in s:
     return None
   date_str = " ".join(s.split(" ")[0:2])
-  return datetime.datetime.strptime(date_str, DATE_FRMT)
+  date_obj = datetime.datetime.strptime(date_str, DATE_FRMT)
+  now = datetime.datetime.now()
+  return date_obj.replace(year=now.year)
 
 def date_to_str(date):
   return date.strftime(DATE_FRMT)[:-3]
@@ -70,11 +73,16 @@ def logcat_thread_func(run, target):
     run.logcat_ = []
     count = 0
     while process.poll() is None and not run.quit_:
+      now = datetime.datetime.now()
       output = process.stdout.readline()
       if output is None or len(output) == 0:
         break
       if "  " in output and 'beginning of ' not in output:
         date_obj = str_to_date(output)
+        delta = datetime.timedelta(seconds=abs((now - date_obj).total_seconds()))
+        if delta > TEN_DAYS:
+          print output
+          continue
         #print(date_to_str(date_obj))
         run.logcat_.append((date_obj, output))
       else:
@@ -143,6 +151,7 @@ def logcat_t_thread_func(run, target, iterations):
 
   run.current_iter_ = 0
   for it in range(iterations):
+    print 'running', it
     run.current_iter_ = it
     run.logcat_.sort(key=lambda x: x[0])
     log_len = len(run.logcat_)
@@ -187,6 +196,7 @@ def logcat_t_thread_func(run, target, iterations):
     results.append(result)
     time.sleep(SLEEP_S)
 
+  print 'done'
   with open(output_prefix + "/result.json", "w") as fout:
     fout.write(json.dumps(results))
 
@@ -237,9 +247,9 @@ class LogcatRun:
 def setup():
   dev = pick_device()
   adb('logcat -P ""', dev)
-  LogcatRun(dev, 10)
+  run = LogcatRun(dev, 10)
 
-  while True:
+  while not run.quit_:
       try:
         time.sleep(1)
       except KeyboardInterrupt:
