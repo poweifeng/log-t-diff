@@ -51,8 +51,7 @@ def adb(cmds, target):
   return res.strip()
 
 def str_to_date(s):
-  if not "  " in s:
-    return None
+  s = re.sub(r'\s+', ' ', s)
   date_str = " ".join(s.split(" ")[0:2])
   date_obj = datetime.datetime.strptime(date_str, DATE_FRMT)
   now = datetime.datetime.now()
@@ -77,7 +76,7 @@ def logcat_thread_func(run, target):
       output = process.stdout.readline()
       if output is None or len(output) == 0:
         break
-      if "  " in output and 'beginning of ' not in output:
+      if 'beginning of ' not in output and len(output) > 0:
         date_obj = str_to_date(output)
         delta = datetime.timedelta(seconds=abs((now - date_obj).total_seconds()))
         if delta > TEN_DAYS:
@@ -132,12 +131,13 @@ def logcat_t_thread_func(run, target, iterations):
   def mark_seen(ts, seen):
     seen[ts] = 1 if ts not in seen else seen[ts] + 1
 
+  def get_mark(log):
+    return log[0:min(len(log), 100)].strip()
+
   mkdir_if_not_exist(DATA_DIR)
 
   device = wait_while_no_device(target)
   product = find_product_name(target)
-  mkdir_if_not_exist(product)
-
   start_time = datetime.datetime.now()
 
   output_prefix = DATA_DIR + "/" + product + "_" + clean_timestamp(start_time)
@@ -153,23 +153,26 @@ def logcat_t_thread_func(run, target, iterations):
   for it in range(iterations):
     print 'running', it
     run.current_iter_ = it
-    run.logcat_.sort(key=lambda x: x[0])
-    log_len = len(run.logcat_)
+    ncat = run.logcat_[:]
+    ncat.sort(key=lambda x: x[0])
+    last_logcat_timestamp = ncat[-1][0]
+    log_len = len(ncat)
     if log_len == 0:
       print 'sleep'
       time.sleep(5)
       continue
 
     r = random.randint(0, log_len - 1)
-    timestamp = run.logcat_[r][0]
+    timestamp = ncat[r][0]
     rstrs = r_adb(date_to_str(timestamp)).split("\n")
 
-    logcat_filtered = filter(lambda (ts, _): ts >= timestamp, run.logcat_)
-    logcat_t = map(lambda x: (str_to_date(x), x),
-              filter(lambda x: 'beginning of ' not in x, rstrs))
+    logcat_filtered = [(get_mark(l), l) for (t, l) in filter(lambda (ts, _): ts >= timestamp, ncat)]
+    logcat_t_orig = [(a, b) for (a, b) in [(str_to_date(x), x) for x in rstrs if 'beginning of ' not in x and len(x) > 0] if a <= last_logcat_timestamp]
+    logcat_t = [(get_mark(l), l) for (t, l) in logcat_t_orig]
     seen, tseen = {}, {}
-    map(lambda (ts, _): mark_seen(ts, seen), logcat_filtered)
-    map(lambda (ts, _): mark_seen(ts, tseen), logcat_t)
+    LOG_MARK_LENGTH = 25
+    map(lambda (stamp, log): mark_seen(stamp, seen), logcat_filtered)
+    map(lambda (stamp, log): mark_seen(stamp, tseen), logcat_t)
 
     in_logcat_not_t = timestamp_not_in(tseen, logcat_filtered)
     in_t_not_logcat = timestamp_not_in(seen, logcat_t)
@@ -189,6 +192,8 @@ def logcat_t_thread_func(run, target, iterations):
         "in_logcat_not_t": len(in_logcat_not_t),
         "in_t_not_logcat": len(in_t_not_logcat)
     }
+
+
     if len(in_t_not_logcat) > 0 or len(in_logcat_not_t) > 0:
       dump_logs(logcat_filtered, stamp_dir + "/" + LOGCAT_TXT)
       dump_logs(logcat_t, stamp_dir + "/" + LOGCAT_T_TXT)

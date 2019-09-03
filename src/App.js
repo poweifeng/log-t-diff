@@ -188,12 +188,13 @@ class SingleRecordWidget extends React.Component {
   render() {
     let record = this.props.record;
     let uptimeStr = this.getTimeStr(record.uptime);
-    let success = determineSuccess(record.in_t_not_logcat, record.in_logcat_not_t);
+    let actualSuccess = Math.max(record.in_t_not_logcat, record.in_logcat_not_t) == 0;
+    let acceptableSuccess = determineSuccess(record.in_t_not_logcat, record.in_logcat_not_t);
     let tErrorP = weighted(record.in_t_not_logcat, record.logcat_t_length);
     let tError = Math.round(tErrorP * 100) / 100;
     let logcatErrorP = weighted(record.in_logcat_not_t, record.logcat_length);
     let logcatError = Math.round(logcatErrorP * 100) / 100;
-    let resultColor = success ? BLUE : RED;
+    let resultColor = acceptableSuccess ? BLUE : RED;
     const styleT = {
       padding: "3px 5px",
       backgroundColor: tErrorP === 0 ? WHITE : interpolateColor(BLUE, RED, Math.min(1, 1.5 * tErrorP)),
@@ -209,9 +210,9 @@ class SingleRecordWidget extends React.Component {
     return (
       <div style={{margin: "5px 0", border: "1px solid",
                    borderRadius: 5, padding: 5, borderColor: resultColor}}>
-          <div style={{fontWeight: 700, color: resultColor, cursor: success ? "default" : "pointer"}}
+          <div style={{fontWeight: 700, color: resultColor, cursor: actualSuccess ? "default" : "pointer"}}
                onClick={() => {
-                 if (!success && this.props.setOpen) {
+                 if (!actualSuccess && this.props.setOpen) {
                    this.props.setOpen();
                  }
                }}>
@@ -247,6 +248,7 @@ class DeviceWidget extends React.Component {
   constructor(props) {
     super(props);
     this.state = {
+      fingerprint: '',
       records: [],
       analysis: {},
       leftRunningTime: 0,
@@ -299,6 +301,10 @@ class DeviceWidget extends React.Component {
     });
   }
 
+  getFingerprint() {
+    api.get("fingerprint/" + this.props.deviceId).then(res => this.setState({fingerprint: res}));
+  }
+
   componentWillMount() {
     const repeat = (instVar, timeout, func) => () => {
       if (!this[instVar]) {
@@ -312,6 +318,10 @@ class DeviceWidget extends React.Component {
   }
 
   componentDidUpdate(prevProps, prevState) {
+    if (!!this.props.deviceId && this.props.deviceId.length > 0
+        && (!this.state.fingerprint || this.state.fingerprint.length == 0)) {
+      this.getFingerprint();
+    }
     if (prevState.records.length != this.state.records.length) {
       let analysis = analyzeRecords(this.state.records);
       const updateBucketChart = (ctx, indata, title) => {
@@ -370,6 +380,7 @@ class DeviceWidget extends React.Component {
           <div style={deviceIdStyle}>
             <div>{product} ({sdk}) {!this.props.available ? ' - unavailable' : ''}</div>
             <div style={serialStyle}>{serial}</div>
+            <div style={serialStyle}>{this.state.fingerprint}</div>
           </div>
         </div>
         <div style={{fontSize: 13}}>

@@ -41,6 +41,11 @@ def get_records(dev_id):
     return json.dumps(run_records_[dev_id], ensure_ascii=False)
   return json.dumps([])
 
+@app.route('/fingerprint/<device_id>')
+def get_fingerprint(device_id):
+  dev = inv_device_id_[device_id]
+  return adb('shell getprop ro.build.fingerprint', dev)
+
 def create_id(product, sdk, serial):
   return product + "+" + sdk + "+" + serial
 
